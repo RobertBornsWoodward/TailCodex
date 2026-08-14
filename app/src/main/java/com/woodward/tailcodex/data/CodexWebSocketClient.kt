@@ -26,26 +26,27 @@ class CodexWebSocketClient(
         .retryOnConnectionFailure(true)
         .build()
     private val nextId = AtomicLong(1)
+    private val connectionGeneration = AtomicLong(0)
     private val pending = ConcurrentHashMap<String, (Result<JSONObject>) -> Unit>()
     @Volatile private var socket: WebSocket? = null
     @Volatile private var initialized = false
-    @Volatile private var intentionalClose = false
 
     fun connect(config: ConnectionConfig) {
         close()
-        intentionalClose = false
+        val generation = connectionGeneration.incrementAndGet()
         initialized = false
         val request = Request.Builder()
             .url(config.endpoint)
             .header("Authorization", "Bearer ${config.token}")
             .build()
-        socket = httpClient.newWebSocket(request, SocketListener())
+        socket = httpClient.newWebSocket(request, SocketListener(generation))
     }
 
     fun close() {
-        intentionalClose = true
+        connectionGeneration.incrementAndGet()
         initialized = false
-        pending.values.forEach { it(Result.failure(IllegalStateException("Connection closed"))) }
+        // Requests owned by a superseded socket must not surface as errors on the replacement
+        // connection. Unexpected current-socket failures are reported by onFailure/onClosed.
         pending.clear()
         socket?.close(1000, "Client disconnect")
         socket = null
@@ -139,8 +140,16 @@ class CodexWebSocketClient(
 
     private fun sendRaw(message: JSONObject): Boolean = socket?.send(message.toString()) == true
 
-    private inner class SocketListener : WebSocketListener() {
+    private inner class SocketListener(
+        private val generation: Long,
+    ) : WebSocketListener() {
+        private fun isCurrentConnection(): Boolean = generation == connectionGeneration.get()
+
         override fun onOpen(webSocket: WebSocket, response: Response) {
+            if (!isCurrentConnection()) {
+                webSocket.close(1000, "Superseded connection")
+                return
+            }
             val id = nextId()
             send(CodexProtocol.initialize(id), { result ->
                 result.onSuccess {
@@ -152,6 +161,7 @@ class CodexWebSocketClient(
         }
 
         override fun onMessage(webSocket: WebSocket, text: String) {
+            if (!isCurrentConnection()) return
             val message = runCatching { JSONObject(text) }.getOrElse {
                 listener.onProtocolError("Invalid JSON from app-server")
                 return
@@ -185,17 +195,19 @@ class CodexWebSocketClient(
         }
 
         override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+            if (!isCurrentConnection()) return
             initialized = false
-            if (!intentionalClose) listener.onDisconnected(reason.ifBlank { "Connection closed" })
+            listener.onDisconnected(reason.ifBlank { "Connection closed" })
         }
 
         override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+            if (!isCurrentConnection()) return
             initialized = false
             val reason = buildString {
                 append(t.message ?: "WebSocket failure")
                 response?.let { append(" (HTTP ${it.code})") }
             }
-            if (!intentionalClose) listener.onDisconnected(reason)
+            listener.onDisconnected(reason)
         }
     }
 }

@@ -18,7 +18,7 @@ object CodexProtocol {
             JSONObject()
                 .put("name", "tailcodex_android")
                 .put("title", "TailCodex Android")
-                .put("version", "0.1.1"),
+                .put("version", "0.1.2"),
         ),
     )
 
@@ -164,6 +164,7 @@ object CodexProtocol {
                     .ifBlank { params.optJSONObject("networkApprovalContext")?.toString(2).orEmpty() },
                 threadId = params.optString("threadId").takeIf(String::isNotBlank),
                 turnId = params.optString("turnId").takeIf(String::isNotBlank),
+                availableDecisions = parseAvailableDecisions(params),
             )
             "item/fileChange/requestApproval" -> ApprovalRequest(
                 rpcId = rpcId,
@@ -183,6 +184,47 @@ object CodexProtocol {
                 rawPermissions = params.optJSONObject("permissions")?.toString(),
             )
             else -> null
+        }
+    }
+
+    fun approvalResponse(request: ApprovalRequest, decision: String): JSONObject {
+        require(request.supports(decision)) { "Unsupported approval decision: $decision" }
+        val result = if (request.kind == ApprovalKind.PERMISSIONS) {
+            val accepted = decision == "accept" || decision == "acceptForSession"
+            JSONObject()
+                .put(
+                    "permissions",
+                    if (accepted && request.rawPermissions != null) {
+                        JSONObject(request.rawPermissions)
+                    } else {
+                        JSONObject()
+                    },
+                )
+                .put("scope", if (decision == "acceptForSession") "session" else "turn")
+        } else {
+            JSONObject().put("decision", decision)
+        }
+        return JSONObject().put("id", request.rpcId).put("result", result)
+    }
+
+    fun resolvedRequestId(method: String, params: JSONObject): String? =
+        if (method == "serverRequest/resolved" && params.has("requestId")) {
+            params.get("requestId").toString()
+        } else {
+            null
+        }
+
+    private fun parseAvailableDecisions(params: JSONObject): Set<String> {
+        val values = params.optJSONArray("availableDecisions") ?: return setOf(
+            "accept",
+            "acceptForSession",
+            "decline",
+            "cancel",
+        )
+        return buildSet {
+            for (index in 0 until values.length()) {
+                values.optString(index).takeIf(String::isNotBlank)?.let(::add)
+            }
         }
     }
 

@@ -99,7 +99,14 @@ class TailCodexViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun closeThread() {
-        _state.update { it.copy(activeThread = null, messages = emptyList(), activeTurnId = null, approval = null) }
+        _state.update {
+            it.copy(
+                activeThread = null,
+                messages = emptyList(),
+                activeTurnId = null,
+                approvals = emptyList(),
+            )
+        }
         loadThreads()
     }
 
@@ -128,12 +135,14 @@ class TailCodexViewModel(application: Application) : AndroidViewModel(applicatio
     fun resolveApproval(decision: String) {
         val approval = _state.value.approval ?: return
         client.resolveApproval(approval, decision)
-        if (decision == "cancel") {
+        if (decision == "cancel" && approval.kind == ApprovalKind.PERMISSIONS) {
             approval.threadId?.let { threadId ->
                 approval.turnId?.let { turnId -> client.interruptTurn(threadId, turnId) }
             }
         }
-        _state.update { it.copy(approval = null) }
+        _state.update { current ->
+            current.copy(approvals = current.approvals.filterNot { it.rpcId.toString() == approval.rpcId.toString() })
+        }
     }
 
     override fun onConnected() {
@@ -143,7 +152,9 @@ class TailCodexViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     override fun onDisconnected(reason: String) {
-        _state.update { it.copy(status = ConnectionStatus.RECONNECTING, error = reason) }
+        _state.update {
+            it.copy(status = ConnectionStatus.RECONNECTING, error = reason, approvals = emptyList())
+        }
         scheduleReconnect()
     }
 
@@ -160,13 +171,38 @@ class TailCodexViewModel(application: Application) : AndroidViewModel(applicatio
                 val turnId = params.optJSONObject("turn")?.optString("id")
                 _state.update { it.copy(activeTurnId = turnId?.takeIf(String::isNotBlank)) }
             }
-            "turn/completed" -> _state.update { it.copy(activeTurnId = null) }
+            "turn/completed" -> {
+                val completedTurnId = params.optJSONObject("turn")?.optString("id")
+                    ?.takeIf(String::isNotBlank)
+                _state.update { current ->
+                    current.copy(
+                        activeTurnId = null,
+                        approvals = if (completedTurnId == null) {
+                            current.approvals
+                        } else {
+                            current.approvals.filterNot { it.turnId == completedTurnId }
+                        },
+                    )
+                }
+            }
+            "serverRequest/resolved" -> {
+                CodexProtocol.resolvedRequestId(method, params)?.let { requestId ->
+                    _state.update { current ->
+                        current.copy(approvals = current.approvals.filterNot { it.rpcId.toString() == requestId })
+                    }
+                }
+            }
             "error" -> showError(IllegalStateException(params.optString("message", "Codex error")))
         }
     }
 
     override fun onApprovalRequested(request: ApprovalRequest) {
-        _state.update { it.copy(approval = request) }
+        _state.update { current ->
+            val withoutDuplicate = current.approvals.filterNot {
+                it.rpcId.toString() == request.rpcId.toString()
+            }
+            current.copy(approvals = withoutDuplicate + request)
+        }
     }
 
     override fun onProtocolError(message: String) {

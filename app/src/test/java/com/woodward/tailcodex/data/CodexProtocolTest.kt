@@ -2,7 +2,9 @@ package com.woodward.tailcodex.data
 
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class CodexProtocolTest {
@@ -78,7 +80,12 @@ class CodexProtocolTest {
             """{
               "id": 42,
               "method": "item/commandExecution/requestApproval",
-              "params": {"threadId":"t1","turnId":"r1","command":"git status"}
+              "params": {
+                "threadId":"t1",
+                "turnId":"r1",
+                "command":"git status",
+                "availableDecisions":["accept","decline"]
+              }
             }""",
         )
 
@@ -87,5 +94,52 @@ class CodexProtocolTest {
         assertNotNull(approval)
         assertEquals(ApprovalKind.COMMAND, approval?.kind)
         assertEquals("git status", approval?.detail)
+        assertTrue(requireNotNull(approval).supports("accept"))
+        assertFalse(approval.supports("acceptForSession"))
+    }
+
+    @Test
+    fun permissionDeclineReturnsEmptyGrantInsteadOfRpcError() {
+        val request = ApprovalRequest(
+            rpcId = 43,
+            kind = ApprovalKind.PERMISSIONS,
+            title = "Grant permissions?",
+            detail = "Network access",
+            threadId = "t1",
+            turnId = "r1",
+            rawPermissions = """{"network":{"enabled":true}}""",
+        )
+
+        val response = CodexProtocol.approvalResponse(request, "decline")
+
+        assertFalse(response.has("error"))
+        assertEquals(0, response.getJSONObject("result").getJSONObject("permissions").length())
+        assertEquals("turn", response.getJSONObject("result").getString("scope"))
+    }
+
+    @Test
+    fun permissionSessionApprovalReturnsRequestedGrant() {
+        val request = ApprovalRequest(
+            rpcId = "approval-44",
+            kind = ApprovalKind.PERMISSIONS,
+            title = "Grant permissions?",
+            detail = "Network access",
+            threadId = "t1",
+            turnId = "r1",
+            rawPermissions = """{"network":{"enabled":true}}""",
+        )
+
+        val response = CodexProtocol.approvalResponse(request, "acceptForSession")
+        val result = response.getJSONObject("result")
+
+        assertEquals("session", result.getString("scope"))
+        assertTrue(result.getJSONObject("permissions").has("network"))
+    }
+
+    @Test
+    fun recognizesResolvedServerRequest() {
+        val params = JSONObject().put("threadId", "t1").put("requestId", 42)
+
+        assertEquals("42", CodexProtocol.resolvedRequestId("serverRequest/resolved", params))
     }
 }

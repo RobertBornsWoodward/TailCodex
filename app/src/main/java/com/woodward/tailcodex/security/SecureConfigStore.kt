@@ -1,11 +1,14 @@
 package com.woodward.tailcodex.security
 
 import android.content.Context
+import android.content.SharedPreferences
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
 import androidx.core.content.edit
-import com.woodward.tailcodex.data.ConnectionConfig
+import com.woodward.tailcodex.domain.ConnectionConfig
+import com.woodward.tailcodex.domain.HostProfile
+import com.woodward.tailcodex.domain.ConnectionState
 import java.security.KeyStore
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
@@ -19,13 +22,67 @@ class SecureConfigStore(context: Context) {
         endpoint = preferences.getString(KEY_ENDPOINT, null) ?: ConnectionConfig().endpoint,
         token = preferences.getString(KEY_TOKEN, null)?.let(::decrypt).orEmpty(),
         defaultCwd = preferences.getString(KEY_CWD, null) ?: ConnectionConfig().defaultCwd,
+        hostId = preferences.getString(KEY_HOST_ID, null) ?: "default",
+        hostName = preferences.getString(KEY_HOST_NAME, null) ?: "Arch",
     )
 
     fun save(config: ConnectionConfig) {
+        val previous = loadProfiles().firstOrNull { it.id == config.hostId }
         preferences.edit {
             putString(KEY_ENDPOINT, config.endpoint)
             putString(KEY_CWD, config.defaultCwd)
             putString(KEY_TOKEN, encrypt(config.token))
+            putString(KEY_HOST_ID, config.hostId)
+            putString(KEY_HOST_NAME, config.hostName)
+        }
+        saveProfile(
+            HostProfile(
+                id = config.hostId,
+                name = config.hostName,
+                endpoint = config.endpoint,
+                credential = config.token,
+                defaultCwd = config.defaultCwd,
+                lastThreadId = previous?.lastThreadId,
+                connectionState = previous?.connectionState ?: ConnectionState.Disconnected(),
+            ),
+        )
+    }
+
+    fun loadProfiles(): List<HostProfile> = preferences.getStringSet(KEY_PROFILE_IDS, emptySet()).orEmpty()
+        .mapNotNull { id ->
+            val prefix = "profile.$id."
+            val endpoint = preferences.getString(prefix + "endpoint", null) ?: return@mapNotNull null
+            HostProfile(
+                id = id,
+                name = preferences.getString(prefix + "name", id).orEmpty(),
+                endpoint = endpoint,
+                credential = preferences.getString(prefix + "credential", null)?.let(::decrypt).orEmpty(),
+                defaultCwd = preferences.getString(prefix + "cwd", "/").orEmpty(),
+                lastThreadId = preferences.getString(prefix + "last_thread", null),
+                connectionState = readConnectionState(prefix),
+            )
+        }.sortedBy(HostProfile::name)
+
+    fun saveProfile(profile: HostProfile) {
+        val prefix = "profile.${profile.id}."
+        preferences.edit {
+            putStringSet(KEY_PROFILE_IDS, preferences.getStringSet(KEY_PROFILE_IDS, emptySet()).orEmpty() + profile.id)
+            putString(prefix + "name", profile.name)
+            putString(prefix + "endpoint", profile.endpoint)
+            putString(prefix + "credential", encrypt(profile.credential))
+            putString(prefix + "cwd", profile.defaultCwd)
+            if (profile.lastThreadId == null) remove(prefix + "last_thread")
+            else putString(prefix + "last_thread", profile.lastThreadId)
+            writeConnectionState(prefix, profile.connectionState)
+        }
+    }
+
+    fun updateProfileRuntime(hostId: String, connectionState: ConnectionState, lastThreadId: String? = null) {
+        if (hostId !in preferences.getStringSet(KEY_PROFILE_IDS, emptySet()).orEmpty()) return
+        val prefix = "profile.$hostId."
+        preferences.edit {
+            if (lastThreadId != null) putString(prefix + "last_thread", lastThreadId)
+            writeConnectionState(prefix, connectionState)
         }
     }
 
@@ -66,6 +123,53 @@ class SecureConfigStore(context: Context) {
         }
     }
 
+    private fun SharedPreferences.Editor.writeConnectionState(
+        prefix: String,
+        state: ConnectionState,
+    ) {
+        remove(prefix + "connection_reason")
+        remove(prefix + "connection_thread")
+        remove(prefix + "connection_attempt")
+        remove(prefix + "connection_stale")
+        when (state) {
+            is ConnectionState.Disconnected -> {
+                putString(prefix + "connection_kind", "disconnected")
+                state.reason?.let { putString(prefix + "connection_reason", it) }
+                putBoolean(prefix + "connection_stale", state.staleSnapshot)
+            }
+            is ConnectionState.Connecting -> {
+                putString(prefix + "connection_kind", "connecting")
+                putInt(prefix + "connection_attempt", state.reconnectAttempt)
+            }
+            is ConnectionState.Initializing -> {
+                putString(prefix + "connection_kind", "initializing")
+                putInt(prefix + "connection_attempt", state.reconnectAttempt)
+            }
+            is ConnectionState.Reconciling -> {
+                putString(prefix + "connection_kind", "reconciling")
+                putString(prefix + "connection_thread", state.threadId)
+                putInt(prefix + "connection_attempt", state.reconnectAttempt)
+            }
+            ConnectionState.Ready -> putString(prefix + "connection_kind", "ready")
+        }
+    }
+
+    private fun readConnectionState(prefix: String): ConnectionState = when (
+        preferences.getString(prefix + "connection_kind", "disconnected")
+    ) {
+        "connecting" -> ConnectionState.Connecting(preferences.getInt(prefix + "connection_attempt", 0))
+        "initializing" -> ConnectionState.Initializing(preferences.getInt(prefix + "connection_attempt", 0))
+        "reconciling" -> ConnectionState.Reconciling(
+            preferences.getString(prefix + "connection_thread", "").orEmpty(),
+            preferences.getInt(prefix + "connection_attempt", 0),
+        )
+        "ready" -> ConnectionState.Ready
+        else -> ConnectionState.Disconnected(
+            preferences.getString(prefix + "connection_reason", null),
+            preferences.getBoolean(prefix + "connection_stale", false),
+        )
+    }
+
     private companion object {
         const val KEY_ALIAS = "tailcodex_capability_token"
         const val TRANSFORMATION = "AES/GCM/NoPadding"
@@ -73,5 +177,8 @@ class SecureConfigStore(context: Context) {
         const val KEY_ENDPOINT = "endpoint"
         const val KEY_CWD = "cwd"
         const val KEY_TOKEN = "token"
+        const val KEY_HOST_ID = "host_id"
+        const val KEY_HOST_NAME = "host_name"
+        const val KEY_PROFILE_IDS = "profile_ids"
     }
 }

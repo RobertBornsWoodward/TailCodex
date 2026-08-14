@@ -30,9 +30,12 @@ private val DarkColors = darkColorScheme(
 )
 
 @Composable
-fun TailCodexTheme(content: @Composable () -> Unit) {
+fun TailCodexTheme(
+    darkTheme: Boolean = isSystemInDarkTheme(),
+    content: @Composable () -> Unit,
+) {
     MaterialTheme(
-        colorScheme = if (isSystemInDarkTheme()) DarkColors else LightColors,
+        colorScheme = if (darkTheme) DarkColors else LightColors,
         content = content,
     )
 }

@@ -18,7 +18,7 @@ object CodexProtocol {
             JSONObject()
                 .put("name", "tailcodex_android")
                 .put("title", "TailCodex Android")
-                .put("version", "0.1.0"),
+                .put("version", "0.1.1"),
         ),
     )
 

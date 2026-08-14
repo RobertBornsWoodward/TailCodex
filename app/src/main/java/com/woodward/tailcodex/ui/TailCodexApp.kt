@@ -118,7 +118,7 @@ private fun SetupScreen(state: TailCodexState, viewModel: TailCodexViewModel) {
     var endpoint by remember(state.config.endpoint) { mutableStateOf(state.config.endpoint) }
     var token by remember(state.config.token) { mutableStateOf(state.config.token) }
     var cwd by remember(state.config.defaultCwd) { mutableStateOf(state.config.defaultCwd) }
-    val busy = state.status == ConnectionStatus.CONNECTING || state.status == ConnectionStatus.RECONNECTING
+    val busy = state.status == ConnectionStatus.CONNECTING
 
     Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
         Column(
@@ -165,7 +165,7 @@ private fun SetupScreen(state: TailCodexState, viewModel: TailCodexViewModel) {
                     Spacer(Modifier.width(12.dp))
                     Text("正在连接…")
                 } else {
-                    Text("连接")
+                    Text(if (state.status == ConnectionStatus.RECONNECTING) "立即重试" else "连接")
                 }
             }
             Text(

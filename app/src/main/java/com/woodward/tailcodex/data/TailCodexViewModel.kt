@@ -214,7 +214,12 @@ class TailCodexViewModel(application: Application) : AndroidViewModel(applicatio
             val attempt = _state.value.reconnectAttempt + 1
             _state.update { it.copy(reconnectAttempt = attempt) }
             delay(min(30_000L, 1_000L shl min(attempt - 1, 5)))
-            if (autoReconnect) client.connect(_state.value.config)
+            if (autoReconnect) {
+                // Release the one-shot job before starting the asynchronous connection so a
+                // subsequent failure can schedule the next backoff attempt.
+                reconnectJob = null
+                client.connect(_state.value.config)
+            }
         }
     }
 

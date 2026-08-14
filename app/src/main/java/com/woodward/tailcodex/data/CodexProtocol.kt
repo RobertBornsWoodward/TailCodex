@@ -34,7 +34,10 @@ object CodexProtocol {
     fun threadResume(id: Long, threadId: String): JSONObject = request(
         id,
         "thread/resume",
-        JSONObject().put("threadId", threadId),
+        JSONObject()
+            .put("threadId", threadId)
+            .put("approvalPolicy", "on-request")
+            .put("approvalsReviewer", "user"),
     )
 
     fun threadStart(id: Long, cwd: String): JSONObject = request(
@@ -42,7 +45,9 @@ object CodexProtocol {
         "thread/start",
         JSONObject()
             .put("cwd", cwd)
-            .put("serviceName", "tailcodex_android"),
+            .put("serviceName", "tailcodex_android")
+            .put("approvalPolicy", "on-request")
+            .put("approvalsReviewer", "user"),
     )
 
     fun turnStart(id: Long, threadId: String, text: String): JSONObject = request(

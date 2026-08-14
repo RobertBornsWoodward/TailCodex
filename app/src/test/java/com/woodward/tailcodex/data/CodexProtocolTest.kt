@@ -9,6 +9,17 @@ import org.junit.Test
 
 class CodexProtocolTest {
     @Test
+    fun routesNewAndResumedThreadApprovalsToUser() {
+        val startParams = CodexProtocol.threadStart(1, "/workspace").getJSONObject("params")
+        val resumeParams = CodexProtocol.threadResume(2, "thread-1").getJSONObject("params")
+
+        assertEquals("on-request", startParams.getString("approvalPolicy"))
+        assertEquals("user", startParams.getString("approvalsReviewer"))
+        assertEquals("on-request", resumeParams.getString("approvalPolicy"))
+        assertEquals("user", resumeParams.getString("approvalsReviewer"))
+    }
+
+    @Test
     fun steerIncludesActiveTurnPrecondition() {
         val request = CodexProtocol.turnSteer(7, "thread-1", "turn-2", "continue")
 

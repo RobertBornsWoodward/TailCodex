@@ -41,7 +41,11 @@ data class ApprovalRequest(
     val threadId: String?,
     val turnId: String?,
     val rawPermissions: String? = null,
+    val availableDecisions: Set<String> = setOf("accept", "acceptForSession", "decline", "cancel"),
 )
+
+fun ApprovalRequest.supports(decision: String): Boolean =
+    kind == ApprovalKind.PERMISSIONS || decision in availableDecisions
 
 data class TailCodexState(
     val config: ConnectionConfig = ConnectionConfig(),
@@ -53,6 +57,8 @@ data class TailCodexState(
     val activeThread: ThreadSummary? = null,
     val messages: List<ChatEntry> = emptyList(),
     val activeTurnId: String? = null,
-    val approval: ApprovalRequest? = null,
+    val approvals: List<ApprovalRequest> = emptyList(),
     val reconnectAttempt: Int = 0,
-)
+) {
+    val approval: ApprovalRequest? get() = approvals.firstOrNull()
+}

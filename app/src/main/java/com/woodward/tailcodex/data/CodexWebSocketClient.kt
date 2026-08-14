@@ -98,25 +98,7 @@ class CodexWebSocketClient(
     }
 
     fun resolveApproval(request: ApprovalRequest, decision: String) {
-        val response = JSONObject().put("id", request.rpcId)
-        if (request.kind == ApprovalKind.PERMISSIONS) {
-            if (decision == "accept" && request.rawPermissions != null) {
-                response.put(
-                    "result",
-                    JSONObject()
-                        .put("permissions", JSONObject(request.rawPermissions))
-                        .put("scope", "turn"),
-                )
-            } else {
-                response.put(
-                    "error",
-                    JSONObject().put("code", -32000).put("message", "User declined permission request"),
-                )
-            }
-        } else {
-            response.put("result", JSONObject().put("decision", decision))
-        }
-        sendRaw(response)
+        sendRaw(CodexProtocol.approvalResponse(request, decision))
     }
 
     private fun nextId(): Long = nextId.getAndIncrement()

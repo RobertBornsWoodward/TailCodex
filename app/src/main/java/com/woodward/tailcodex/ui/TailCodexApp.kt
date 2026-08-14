@@ -68,6 +68,7 @@ import com.woodward.tailcodex.data.MessageRole
 import com.woodward.tailcodex.data.TailCodexState
 import com.woodward.tailcodex.data.TailCodexViewModel
 import com.woodward.tailcodex.data.ThreadSummary
+import com.woodward.tailcodex.data.supports
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -101,12 +102,25 @@ fun TailCodexApp(viewModel: TailCodexViewModel) {
                 }
             },
             confirmButton = {
-                TextButton(onClick = { viewModel.resolveApproval("accept") }) { Text("本次允许") }
+                Row {
+                    if (approval.supports("acceptForSession")) {
+                        TextButton(onClick = { viewModel.resolveApproval("acceptForSession") }) {
+                            Text("本会话允许")
+                        }
+                    }
+                    if (approval.supports("accept")) {
+                        TextButton(onClick = { viewModel.resolveApproval("accept") }) { Text("本次允许") }
+                    }
+                }
             },
             dismissButton = {
                 Row {
-                    TextButton(onClick = { viewModel.resolveApproval("decline") }) { Text("拒绝") }
-                    TextButton(onClick = { viewModel.resolveApproval("cancel") }) { Text("拒绝并停止") }
+                    if (approval.supports("decline")) {
+                        TextButton(onClick = { viewModel.resolveApproval("decline") }) { Text("拒绝") }
+                    }
+                    if (approval.supports("cancel")) {
+                        TextButton(onClick = { viewModel.resolveApproval("cancel") }) { Text("拒绝并停止") }
+                    }
                 }
             },
         )

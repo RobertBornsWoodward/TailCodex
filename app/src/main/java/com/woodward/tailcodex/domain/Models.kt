@@ -6,6 +6,8 @@ data class ConnectionConfig(
     val defaultCwd: String = "/home/Woodward",
     val hostId: String = "default",
     val hostName: String = "Arch",
+    val hostAgentEndpoint: String = "",
+    val hostAgentCredential: String = "",
 )
 
 data class HostProfile(
@@ -16,6 +18,8 @@ data class HostProfile(
     val defaultCwd: String,
     val lastThreadId: String? = null,
     val connectionState: ConnectionState = ConnectionState.Disconnected(),
+    val hostAgentEndpoint: String = "",
+    val hostAgentCredential: String = "",
 )
 
 sealed interface ConnectionState {
@@ -28,6 +32,17 @@ sealed interface ConnectionState {
     data class Initializing(val reconnectAttempt: Int = 0) : ConnectionState
     data class Reconciling(val threadId: String, val reconnectAttempt: Int = 0) : ConnectionState
     data object Ready : ConnectionState
+}
+
+sealed class CodexSessionFailure(message: String, cause: Throwable? = null) : Exception(message, cause) {
+    class RpcTimeout(val method: String, cause: Throwable? = null) :
+        CodexSessionFailure("RPC timed out: $method", cause)
+
+    class TransportLost(message: String, cause: Throwable? = null) : CodexSessionFailure(message, cause)
+    class Protocol(val code: Int, message: String, cause: Throwable? = null) :
+        CodexSessionFailure(message, cause)
+
+    class Other(message: String, cause: Throwable? = null) : CodexSessionFailure(message, cause)
 }
 
 enum class ThreadLease {

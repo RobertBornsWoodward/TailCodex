@@ -14,6 +14,7 @@ import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
+import java.util.UUID
 
 class SecureConfigStore(context: Context) {
     private val preferences = context.getSharedPreferences("tailcodex_config", Context.MODE_PRIVATE)
@@ -24,6 +25,8 @@ class SecureConfigStore(context: Context) {
         defaultCwd = preferences.getString(KEY_CWD, null) ?: ConnectionConfig().defaultCwd,
         hostId = preferences.getString(KEY_HOST_ID, null) ?: "default",
         hostName = preferences.getString(KEY_HOST_NAME, null) ?: "Arch",
+        hostAgentEndpoint = preferences.getString(KEY_HOST_AGENT_ENDPOINT, null) ?: ConnectionConfig().hostAgentEndpoint,
+        hostAgentCredential = preferences.getString(KEY_HOST_AGENT_CREDENTIAL, null)?.let(::decrypt).orEmpty(),
     )
 
     fun save(config: ConnectionConfig) {
@@ -34,6 +37,8 @@ class SecureConfigStore(context: Context) {
             putString(KEY_TOKEN, encrypt(config.token))
             putString(KEY_HOST_ID, config.hostId)
             putString(KEY_HOST_NAME, config.hostName)
+            putString(KEY_HOST_AGENT_ENDPOINT, config.hostAgentEndpoint)
+            putString(KEY_HOST_AGENT_CREDENTIAL, encrypt(config.hostAgentCredential))
         }
         saveProfile(
             HostProfile(
@@ -44,6 +49,8 @@ class SecureConfigStore(context: Context) {
                 defaultCwd = config.defaultCwd,
                 lastThreadId = previous?.lastThreadId,
                 connectionState = previous?.connectionState ?: ConnectionState.Disconnected(),
+                hostAgentEndpoint = config.hostAgentEndpoint,
+                hostAgentCredential = config.hostAgentCredential,
             ),
         )
     }
@@ -60,6 +67,8 @@ class SecureConfigStore(context: Context) {
                 defaultCwd = preferences.getString(prefix + "cwd", "/").orEmpty(),
                 lastThreadId = preferences.getString(prefix + "last_thread", null),
                 connectionState = readConnectionState(prefix),
+                hostAgentEndpoint = preferences.getString(prefix + "host_agent_endpoint", "").orEmpty(),
+                hostAgentCredential = preferences.getString(prefix + "host_agent_credential", null)?.let(::decrypt).orEmpty(),
             )
         }.sortedBy(HostProfile::name)
 
@@ -71,6 +80,8 @@ class SecureConfigStore(context: Context) {
             putString(prefix + "endpoint", profile.endpoint)
             putString(prefix + "credential", encrypt(profile.credential))
             putString(prefix + "cwd", profile.defaultCwd)
+            putString(prefix + "host_agent_endpoint", profile.hostAgentEndpoint)
+            putString(prefix + "host_agent_credential", encrypt(profile.hostAgentCredential))
             if (profile.lastThreadId == null) remove(prefix + "last_thread")
             else putString(prefix + "last_thread", profile.lastThreadId)
             writeConnectionState(prefix, profile.connectionState)
@@ -88,6 +99,10 @@ class SecureConfigStore(context: Context) {
 
     fun clear() {
         preferences.edit { clear() }
+    }
+
+    fun deviceId(): String = preferences.getString(KEY_DEVICE_ID, null) ?: "android-${UUID.randomUUID()}".also {
+        preferences.edit { putString(KEY_DEVICE_ID, it) }
     }
 
     private fun encrypt(value: String): String {
@@ -180,5 +195,8 @@ class SecureConfigStore(context: Context) {
         const val KEY_HOST_ID = "host_id"
         const val KEY_HOST_NAME = "host_name"
         const val KEY_PROFILE_IDS = "profile_ids"
+        const val KEY_HOST_AGENT_ENDPOINT = "host_agent_endpoint"
+        const val KEY_HOST_AGENT_CREDENTIAL = "host_agent_credential"
+        const val KEY_DEVICE_ID = "device_id"
     }
 }

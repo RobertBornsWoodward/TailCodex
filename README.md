@@ -18,6 +18,19 @@ TailCodex 0.2 can:
 It does **not** automate pixels in the ChatGPT window and it does not contain an
 OpenAI API key. Codex authentication remains on the host.
 
+TailCodex 0.3 adds an independent Go Host Agent for pairing, durable/recoverable operations,
+metadata-only audit summaries and safe Codex lifecycle control. It deliberately does not tunnel
+these controls through Codex JSON-RPC. Hosts without an Agent retain the 0.2 direct-WSS path. See
+[Host Agent protocol v1](docs/host-agent-protocol.md).
+
+The I0 systemd/native-daemon, graphical-session and terminal-renderer findings are recorded in
+[the PoC report](docs/i0-poc-report.md).
+The requirement-by-requirement verified, staged and device-gated status is tracked in the
+[specification completion matrix](docs/spec-completion-matrix.md).
+
+The design decision against making desktop automation authoritative is documented in the
+[GPT Mini route comparison](docs/codex-mini-comparison.md).
+
 ## Requirements
 
 - Android 8.0 (API 26) or newer
@@ -34,6 +47,12 @@ The tested host in this repository is Arch Linux. See
 ```bash
 export ANDROID_SDK_ROOT="$HOME/.local/share/android-sdk"
 ./gradlew test lint assembleDebug verifyPaparazziDebug
+```
+
+Build a direct-WSS-only variant with Host Control compiled off:
+
+```bash
+./gradlew -Ptailcodex.hostControlEnabled=false assembleDebug
 ```
 
 The debug APK is written to `app/build/outputs/apk/debug/app-debug.apk`.

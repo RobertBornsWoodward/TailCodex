@@ -1,5 +1,6 @@
 package com.woodward.tailcodex.protocol
 
+import com.woodward.tailcodex.BuildConfig
 import com.woodward.tailcodex.domain.ApprovalDecision
 import com.woodward.tailcodex.domain.ConversationItem
 import com.woodward.tailcodex.domain.MessageRole
@@ -32,7 +33,7 @@ object CodexWireProtocol {
             JSONObject()
                 .put("name", "tailcodex_android")
                 .put("title", "TailCodex Android")
-                .put("version", "0.2.0"),
+                .put("version", BuildConfig.VERSION_NAME),
         )
 
     fun threadListParams(search: String, cursor: String?, limit: Int = 50): JSONObject = JSONObject()

@@ -12,6 +12,8 @@ import com.woodward.tailcodex.domain.ThreadState
 import com.woodward.tailcodex.domain.TailcodexThread
 import com.woodward.tailcodex.domain.TurnState
 import com.woodward.tailcodex.domain.ImageAttachment
+import com.woodward.tailcodex.domain.CodexSessionFailure
+import com.woodward.tailcodex.rpc.RpcFailure
 import com.woodward.tailcodex.protocol.CodexWireProtocol
 import com.woodward.tailcodex.repository.CodexRepository
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -74,6 +76,23 @@ class SessionCoordinator(
 
     fun openThread(thread: TailcodexThread) = threadSession.openReadOnly(thread)
     fun startThread() = threadSession.startThread(_state.value.config.defaultCwd)
+
+    fun openThreadById(threadId: String, onComplete: (Result<Unit>) -> Unit) = threadSession.openReadOnly(
+        TailcodexThread(
+            id = threadId,
+            title = "",
+            preview = "",
+            cwd = _state.value.config.defaultCwd,
+            updatedAt = 0,
+            status = "unknown",
+            hostId = _state.value.config.hostId,
+        ),
+        { onComplete(it.toDomainFailure()) },
+        reportFailure = false,
+    )
+
+    fun startThread(onComplete: (Result<Unit>) -> Unit) =
+        threadSession.startThread(_state.value.config.defaultCwd) { onComplete(it.toDomainFailure()) }
 
     fun closeThread() {
         serverRequests.clear()
@@ -212,6 +231,22 @@ class SessionCoordinator(
     override fun onFailure(message: String) = dispatch(SessionEvent.Failure(message))
 
     private fun fail(error: Throwable) = onFailure(error.message ?: "未知错误")
+
+    private fun Result<Unit>.toDomainFailure(): Result<Unit> = fold(
+        onSuccess = { Result.success(Unit) },
+        onFailure = { error ->
+            Result.failure(
+                when (error) {
+                    is RpcFailure.Timeout -> CodexSessionFailure.RpcTimeout(error.method, error)
+                    is RpcFailure.Disconnected, is RpcFailure.SendFailed ->
+                        CodexSessionFailure.TransportLost(error.message ?: "Codex transport lost", error)
+                    is RpcFailure.Protocol ->
+                        CodexSessionFailure.Protocol(error.code, error.message ?: "Codex protocol error", error)
+                    else -> CodexSessionFailure.Other(error.message ?: "Codex session failed", error)
+                },
+            )
+        },
+    )
 
     @Synchronized
     private fun dispatch(event: SessionEvent) {

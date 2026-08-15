@@ -7,11 +7,17 @@ read-only.
 ```text
 Compose UI
   -> presentation/TailCodexViewModel
-  -> session/SessionCoordinator
-       -> ConnectionManager -> rpc/JsonRpcSession -> transport/WebSocketTransport -> OkHttp
-       -> ThreadSession -> repository/CodexRepository -> protocol/CodexApi
-       -> LeaseManager
-       -> ServerRequestManager
+       -> presentation/TailCodexAppCoordinator
+            -> session/CodexSessionCoordinator (typealias of existing SessionCoordinator; Codex data plane)
+                 -> ConnectionManager -> rpc/JsonRpcSession -> transport/WebSocketTransport -> OkHttp
+                 -> ThreadSession -> repository/CodexRepository -> protocol/CodexApi
+                 -> LeaseManager
+                 -> ServerRequestManager
+            -> hostcontrol/HostControlCoordinator (Host Agent control plane)
+            -> terminal/TerminalCoordinator (reserved)
+            -> workstation/WorkstationCoordinator (reserved)
+       -> integrations/IntegrationCatalog (compile-time I5 declarations)
+       -> ui/workspace/WorkspacePresentation (reserved shared-surface boundary)
 
 Codex JSON Schema snapshot -> protocol/generated wire DTOs
 wire DTOs -> protocol/CodexWireProtocol -> domain models -> UI
@@ -32,9 +38,26 @@ ready/reconciled/writable/lease gate as other mutations. A locally-owned turn th
 disconnect returns as `UNKNOWN`, then must re-read and resume before the phone reclaims its soft
 lease; a freshly observed active historical thread remains `OTHER_CLIENT` and read-only.
 
+`TailCodexAppCoordinator` is an application-level composer only. It may sequence “Host Agent
+ready -> Codex readyz -> app-server WSS initialize -> thread reconcile/start”, but it may not
+implement HTTP, WebSocket, systemd, PTY or desktop-adapter details. Host lifecycle state is not a
+Codex connection state: `LOCAL_READY` does not imply that Android has initialized a WSS session.
+
+The Go Host Agent listens on loopback port 4510 and is exposed separately on Tailnet HTTPS 8444.
+It owns per-device pairing, grants, durable operations, lifecycle adapters and audit metadata.
+The Codex app-server stays on 4500/8443 with separate authentication and remains authoritative
+for all thread, turn, approval, user-input, MCP and diff traffic.
+
+Android commits a non-secret operation checkpoint before lifecycle POST. If the process is killed
+before the response is persisted, the recreated coordinator resubmits the same idempotency key;
+if an operation ID is known, it resumes authoritative GET polling. Host audit summaries are a
+separately granted, metadata-only read capability.
+
 ## Extension boundaries
 
-- Multi-host profiles store endpoint, encrypted credential, default cwd and last thread. Thread,
+- Multi-host profiles use a stable WSS-endpoint identity while treating a changed Host Agent
+  endpoint as a separate credential and operation-checkpoint scope. They store encrypted
+  credentials, default cwd and last thread. Thread,
   last connection state, draft, notification, reconnect and lease keys include host identity.
   Only one coordinator is active at a time.
 - A Gateway is intentionally absent. Introduce it only when multiple phone/tablet/desktop/browser
@@ -45,6 +68,10 @@ lease; a freshly observed active historical thread remains `OTHER_CLIENT` and re
   deployment work.
 - Future terminal, file management, system control and Mathematica controls should follow the
   same independent capability-adapter pattern instead of adding methods to the Codex protocol.
+- The I5 adapter catalog declares IDs, versions, risk/mutability levels, timeout classes, schemas,
+  presentation hints and required capabilities at compile time. Declarations are not advertised
+  as executable features until concrete adapters and grants exist; dynamic plugin loading remains
+  out of scope.
 
 ## Mobile rendering
 

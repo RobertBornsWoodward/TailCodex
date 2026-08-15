@@ -47,6 +47,7 @@ import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.Computer
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -112,6 +113,15 @@ import com.woodward.tailcodex.domain.TurnState
 import com.woodward.tailcodex.domain.ReviewTarget
 import com.woodward.tailcodex.domain.RpcId
 import com.woodward.tailcodex.presentation.TailCodexViewModel
+import com.woodward.tailcodex.presentation.AppFailure
+import com.woodward.tailcodex.hostcontrol.protocol.HostAgentConnectionState
+import com.woodward.tailcodex.hostcontrol.protocol.HostControlState
+import com.woodward.tailcodex.hostcontrol.protocol.CodexOwnership
+import com.woodward.tailcodex.hostcontrol.protocol.HostOperationStatus
+import com.woodward.tailcodex.hostcontrol.protocol.HostOperation
+import com.woodward.tailcodex.hostcontrol.protocol.HostLogSummaryEntry
+import com.woodward.tailcodex.hostcontrol.protocol.CodexServiceSnapshot
+import com.woodward.tailcodex.hostcontrol.protocol.CodexServiceState
 import coil3.compose.AsyncImage
 import java.time.Instant
 import java.time.ZoneId
@@ -120,16 +130,18 @@ import java.time.format.DateTimeFormatter
 @Composable
 fun TailCodexApp(viewModel: TailCodexViewModel) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val hostState by viewModel.hostState.collectAsStateWithLifecycle()
+    val appState by viewModel.appState.collectAsStateWithLifecycle()
     LaunchedEffect(Unit) {
         if (state.config.token.isNotBlank() && state.connection is ConnectionState.Disconnected) {
             viewModel.connect(state.config.endpoint, state.config.token, state.config.defaultCwd)
         }
     }
     when {
-        state.currentThread != null -> ChatScreen(state, viewModel)
+        state.currentThread != null -> ChatScreen(state, hostState, appState.failure, viewModel)
         state.connection is ConnectionState.Ready || state.connection is ConnectionState.Reconciling ->
-            ThreadListScreen(state, viewModel)
-        else -> SetupScreen(state, viewModel)
+            ThreadListScreen(state, hostState, appState.failure, viewModel)
+        else -> SetupScreen(state, hostState, appState.failure, viewModel)
     }
     state.serverRequests.firstOrNull()?.let {
         RequestDialog(it, state.connection is ConnectionState.Ready && !state.stale, viewModel)
@@ -137,15 +149,23 @@ fun TailCodexApp(viewModel: TailCodexViewModel) {
 }
 
 @Composable
-private fun SetupScreen(state: SessionState, viewModel: TailCodexViewModel) {
+private fun SetupScreen(state: SessionState, hostState: HostControlState, appFailure: AppFailure?, viewModel: TailCodexViewModel) {
     var endpoint by remember(state.config.endpoint) { mutableStateOf(state.config.endpoint) }
     var token by remember(state.config.token) { mutableStateOf(state.config.token) }
     var cwd by remember(state.config.defaultCwd) { mutableStateOf(state.config.defaultCwd) }
     var hostName by remember(state.config.hostName) { mutableStateOf(state.config.hostName) }
+    var hostAgentEndpoint by remember(state.config.hostAgentEndpoint) { mutableStateOf(state.config.hostAgentEndpoint) }
+    var pairingCode by remember { mutableStateOf("") }
     val profiles = remember(state.config.hostId) { viewModel.hostProfiles() }
-    val busy = state.connection is ConnectionState.Connecting || state.connection is ConnectionState.Initializing
+    val busy = state.connection is ConnectionState.Connecting ||
+        state.connection is ConnectionState.Initializing ||
+        hostState.connection is HostAgentConnectionState.Connecting ||
+        hostState.connection is HostAgentConnectionState.Pairing
     Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
-        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        Column(
+            Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
             Text("TailCodex", style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.SemiBold)
             Text("通过 Tailnet 安全连接 Codex app-server", color = MaterialTheme.colorScheme.onSurfaceVariant)
             if (profiles.isNotEmpty()) {
@@ -165,10 +185,42 @@ private fun SetupScreen(state: SessionState, viewModel: TailCodexViewModel) {
                 singleLine = true,
             )
             OutlinedTextField(cwd, { cwd = it }, Modifier.fillMaxWidth(), label = { Text("默认工作目录") }, singleLine = true)
-            state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            if (viewModel.hostControlEnabled) {
+                OutlinedTextField(
+                    hostAgentEndpoint,
+                    { hostAgentEndpoint = it },
+                    Modifier.fillMaxWidth(),
+                    label = { Text("Host Agent HTTPS 端点（可选）") },
+                    singleLine = true,
+                )
+                if (
+                    hostAgentEndpoint.isNotBlank() &&
+                    (state.config.hostAgentCredential.isBlank() || hostState.connection is HostAgentConnectionState.AuthenticationFailed)
+                ) {
+                    OutlinedTextField(
+                        pairingCode,
+                        { pairingCode = it },
+                        Modifier.fillMaxWidth(),
+                        label = { Text("一次性配对码") },
+                        singleLine = true,
+                    )
+                }
+                Text(hostControlLabel(hostState), style = MaterialTheme.typography.bodySmall)
+            }
+            appFailure?.let { AppFailureStrip(it, viewModel::reconnect) }
+            if (appFailure == null) state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             state.notice?.let { NoticeStrip(it, viewModel::clearNotice) }
             Button(
-                onClick = { viewModel.connect(endpoint, token, cwd, hostName) },
+                onClick = {
+                    viewModel.connect(
+                        endpoint,
+                        token,
+                        cwd,
+                        hostName,
+                        if (viewModel.hostControlEnabled) hostAgentEndpoint else "",
+                        if (viewModel.hostControlEnabled) pairingCode else "",
+                    )
+                },
                 enabled = !busy,
                 modifier = Modifier.fillMaxWidth().height(52.dp),
             ) {
@@ -185,8 +237,9 @@ private fun SetupScreen(state: SessionState, viewModel: TailCodexViewModel) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ThreadListScreen(state: SessionState, viewModel: TailCodexViewModel) {
+private fun ThreadListScreen(state: SessionState, hostState: HostControlState, appFailure: AppFailure?, viewModel: TailCodexViewModel) {
     val loaded = state.threadList as? ThreadListState.Loaded
+    var hostDialog by remember { mutableStateOf(false) }
     Scaffold(
         topBar = {
             TopAppBar(
@@ -194,6 +247,9 @@ private fun ThreadListScreen(state: SessionState, viewModel: TailCodexViewModel)
                     ConnectionDot(state.connection); Spacer(Modifier.width(10.dp)); Text("会话")
                 } },
                 actions = {
+                    if (viewModel.hostControlEnabled) {
+                        IconButton({ hostDialog = true }) { Icon(Icons.Default.Computer, "主机控制") }
+                    }
                     IconButton(viewModel::loadThreads) { Icon(Icons.Default.Refresh, "刷新") }
                     IconButton({ viewModel.disconnect() }) { Icon(Icons.Default.Close, "断开") }
                 },
@@ -214,7 +270,8 @@ private fun ThreadListScreen(state: SessionState, viewModel: TailCodexViewModel)
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                 keyboardActions = KeyboardActions(onSearch = { viewModel.loadThreads() }),
             )
-            state.error?.let { ErrorStrip(it, viewModel::reconnect) }
+            appFailure?.let { AppFailureStrip(it, viewModel::reconnect) }
+            if (appFailure == null) state.error?.let { ErrorStrip(it, viewModel::reconnect) }
             state.notice?.let { NoticeStrip(it, viewModel::clearNotice) }
             if (state.threadList is ThreadListState.Loading) {
                 Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
@@ -233,6 +290,7 @@ private fun ThreadListScreen(state: SessionState, viewModel: TailCodexViewModel)
             }
         }
     }
+    if (hostDialog) HostControlDialog(hostState, { hostDialog = false }, viewModel::restartCodex)
 }
 
 @Composable
@@ -252,7 +310,7 @@ private fun ThreadRow(thread: TailcodexThread, onClick: () -> Unit) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ChatScreen(state: SessionState, viewModel: TailCodexViewModel) {
+private fun ChatScreen(state: SessionState, hostState: HostControlState, appFailure: AppFailure?, viewModel: TailCodexViewModel) {
     val thread = requireNotNull(state.currentThread)
     val listState = rememberLazyListState()
     var composer by rememberSaveable(thread.id) { mutableStateOf(viewModel.loadDraft(thread.id)) }
@@ -271,6 +329,7 @@ private fun ChatScreen(state: SessionState, viewModel: TailCodexViewModel) {
     }
     var menu by remember { mutableStateOf(false) }
     var reviewDialog by remember { mutableStateOf(false) }
+    var hostDialog by remember { mutableStateOf(false) }
     val writableNetwork = state.connection is ConnectionState.Ready && !state.stale
     LaunchedEffect(state.items.size, (state.items.lastOrNull() as? ConversationItem.Message)?.markdown?.length) {
         if (state.items.isNotEmpty()) listState.animateScrollToItem(state.items.lastIndex)
@@ -287,6 +346,13 @@ private fun ChatScreen(state: SessionState, viewModel: TailCodexViewModel) {
                 actions = {
                     IconButton({ menu = true }) { Icon(Icons.Default.MoreVert, "会话操作") }
                     DropdownMenu(menu, { menu = false }) {
+                        if (viewModel.hostControlEnabled) {
+                            DropdownMenuItem(
+                                { Text("主机控制") },
+                                { hostDialog = true; menu = false },
+                                leadingIcon = { Icon(Icons.Default.Computer, null) },
+                            )
+                        }
                         DropdownMenuItem({ Text(if (thread.pinned) "取消置顶" else "置顶") }, {
                             viewModel.pinThread(!thread.pinned); menu = false
                         }, leadingIcon = { Icon(Icons.Default.PushPin, null) })
@@ -346,7 +412,8 @@ private fun ChatScreen(state: SessionState, viewModel: TailCodexViewModel) {
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
             NetworkBanner(state, viewModel)
-            state.error?.let { ErrorStrip(it, viewModel::reconnect) }
+            appFailure?.let { AppFailureStrip(it, viewModel::reconnect) }
+            if (appFailure == null) state.error?.let { ErrorStrip(it, viewModel::reconnect) }
             state.notice?.let { NoticeStrip(it, viewModel::clearNotice) }
             LazyColumn(
                 state = listState,
@@ -360,6 +427,7 @@ private fun ChatScreen(state: SessionState, viewModel: TailCodexViewModel) {
         dismiss = { reviewDialog = false },
         start = { viewModel.startReview(it); reviewDialog = false },
     )
+    if (hostDialog) HostControlDialog(hostState, { hostDialog = false }, viewModel::restartCodex)
 }
 
 @Composable
@@ -861,6 +929,66 @@ private fun NetworkBanner(state: SessionState, viewModel: TailCodexViewModel) {
 }
 
 @Composable
+private fun HostControlDialog(
+    state: HostControlState,
+    dismiss: () -> Unit,
+    restart: () -> Unit,
+) {
+    val operationBusy = state.operation?.status == HostOperationStatus.PENDING ||
+        state.operation?.status == HostOperationStatus.RUNNING
+    val restartable = state.connection is HostAgentConnectionState.Ready &&
+        state.service?.ownership in setOf(CodexOwnership.MANAGED_SYSTEMD, CodexOwnership.MANAGED_NATIVE) &&
+        "codex.lifecycle" in state.features &&
+        "codex.lifecycle" in state.grants &&
+        !operationBusy
+    AlertDialog(
+        onDismissRequest = dismiss,
+        title = { Text("主机控制") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(hostControlLabel(state))
+                state.service?.let {
+                    Text("Codex：${it.state} · ${it.ownership}")
+                    it.detail?.let { detail -> Text(detail, style = MaterialTheme.typography.bodySmall) }
+                }
+                state.operation?.let {
+                    Text("最近操作：${it.kind} · ${it.status}", style = MaterialTheme.typography.bodySmall)
+                }
+                if (state.recentLogs.isNotEmpty()) {
+                    Text("最近审计", style = MaterialTheme.typography.labelMedium)
+                    state.recentLogs.take(5).forEach {
+                        Text(
+                            "${it.action} · ${it.outcome} · ${it.riskLevel}",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                }
+                state.logSummaryError?.let {
+                    Text("日志摘要不可用：$it", style = MaterialTheme.typography.bodySmall)
+                }
+                when {
+                    state.connection is HostAgentConnectionState.Ready && "codex.lifecycle" !in state.features ->
+                        Text("此 Host Agent 不提供 Codex 生命周期控制。", style = MaterialTheme.typography.bodySmall)
+                    state.connection is HostAgentConnectionState.Ready && "codex.lifecycle" !in state.grants ->
+                        Text("此设备没有 Codex 生命周期控制授权。", style = MaterialTheme.typography.bodySmall)
+                }
+                state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                if (state.service?.ownership == CodexOwnership.EXTERNAL) {
+                    Text("外部 Codex 可连接，但 Host Agent 不会停止或重启它。", style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { restart(); dismiss() },
+                enabled = restartable,
+            ) { Text(if (operationBusy) "操作中…" else "重启 Codex") }
+        },
+        dismissButton = { TextButton(dismiss) { Text("关闭") } },
+    )
+}
+
+@Composable
 private fun NoticeStrip(message: String, dismiss: () -> Unit) {
     Row(
         Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.secondaryContainer).padding(10.dp),
@@ -880,6 +1008,11 @@ private fun ErrorStrip(message: String, retry: () -> Unit) {
 }
 
 @Composable
+private fun AppFailureStrip(failure: AppFailure, retry: () -> Unit) {
+    ErrorStrip("${failure.kind.name}：${failure.message}", retry)
+}
+
+@Composable
 private fun ConnectionDot(state: ConnectionState) {
     val color = when (state) {
         ConnectionState.Ready -> Color(0xFF27A269)
@@ -895,6 +1028,16 @@ private fun connectionLabel(state: ConnectionState): String = when (state) {
     is ConnectionState.Reconciling -> "正在对账…"
     ConnectionState.Ready -> "已连接"
     is ConnectionState.Disconnected -> "连接"
+}
+
+private fun hostControlLabel(state: HostControlState): String = when (val connection = state.connection) {
+    HostAgentConnectionState.Unconfigured -> "Host Agent：未配置（仍可直连 Codex）"
+    HostAgentConnectionState.Disconnected -> "Host Agent：未连接"
+    HostAgentConnectionState.Connecting -> "Host Agent：正在检查主机与 Codex 状态…"
+    HostAgentConnectionState.Pairing -> "Host Agent：正在配对设备…"
+    is HostAgentConnectionState.Ready -> "Host Agent ${connection.agentVersion}：已连接"
+    is HostAgentConnectionState.AuthenticationFailed -> "Host Agent：认证失败"
+    is HostAgentConnectionState.Incompatible -> "Host Agent：协议不兼容"
 }
 
 private fun turnLabel(state: TurnState): String = when (state) {
@@ -928,7 +1071,7 @@ private fun formatTime(epochSeconds: Long): String = runCatching {
     Instant.ofEpochSecond(epochSeconds).atZone(ZoneId.systemDefault()).format(dateFormatter)
 }.getOrDefault("")
 
-internal enum class RendererScenario { MARKDOWN_MATH, CODE_COMMAND, DIFF, APPROVAL, COMPOSER }
+internal enum class RendererScenario { MARKDOWN_MATH, CODE_COMMAND, DIFF, APPROVAL, COMPOSER, HOST_CONTROL }
 
 @Composable
 internal fun MobileRendererShowcase(
@@ -999,6 +1142,43 @@ internal fun MobileRendererShowcase(
                         onCamera = {}, onFile = {}, onCode = {},
                     )
                 }
+                RendererScenario.HOST_CONTROL -> HostControlDialog(
+                    state = HostControlState(
+                        connection = HostAgentConnectionState.Ready("0.1.1"),
+                        service = CodexServiceSnapshot(
+                            ownership = CodexOwnership.MANAGED_SYSTEMD,
+                            state = CodexServiceState.LOCAL_READY,
+                            portOpen = true,
+                            ready = true,
+                            detail = "200 OK · systemd running",
+                        ),
+                        operation = HostOperation(
+                            id = "op_preview",
+                            kind = "codex.ensure-running",
+                            status = HostOperationStatus.SUCCEEDED,
+                        ),
+                        features = setOf("codex.lifecycle", "host.logs"),
+                        grants = setOf("codex.lifecycle", "host.logs"),
+                        recentLogs = listOf(
+                            HostLogSummaryEntry(
+                                "2026-08-15T10:00:00Z",
+                                "phone",
+                                "codex.ensure-running",
+                                "PROCESS_CONTROL",
+                                "succeeded",
+                            ),
+                            HostLogSummaryEntry(
+                                "2026-08-15T09:59:00Z",
+                                "phone",
+                                "device.pair",
+                                "PROCESS_CONTROL",
+                                "succeeded",
+                            ),
+                        ),
+                    ),
+                    dismiss = {},
+                    restart = {},
+                )
             }
         }
     }

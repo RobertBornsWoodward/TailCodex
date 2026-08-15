@@ -21,6 +21,7 @@ class SmallPhoneRendererScreenshotTest {
     @Test fun largeUnifiedDiffPortrait() = snapshot(RendererScenario.DIFF)
     @Test fun approvalDialogPortrait() = snapshot(RendererScenario.APPROVAL)
     @Test fun runningComposerLayoutPortrait() = snapshot(RendererScenario.COMPOSER)
+    @Test fun hostControlDialogPortrait() = snapshot(RendererScenario.HOST_CONTROL)
 
     private fun snapshot(scenario: RendererScenario) {
         paparazzi.snapshot {
@@ -50,6 +51,14 @@ class LargeFontRendererScreenshotTest {
         paparazzi.snapshot {
             CompositionLocalProvider(LocalInspectionMode provides true) {
                 MobileRendererShowcase(RendererScenario.COMPOSER)
+            }
+        }
+    }
+
+    @Test fun hostControlLargePhoneLargeFont() {
+        paparazzi.snapshot {
+            CompositionLocalProvider(LocalInspectionMode provides true) {
+                MobileRendererShowcase(RendererScenario.HOST_CONTROL)
             }
         }
     }

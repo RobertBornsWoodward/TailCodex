@@ -51,14 +51,21 @@ class ThreadSession(
         return connectionReady() && leaseManager.isValidLocal(connectionGeneration(), hostIdentity())
     }
 
-    fun openReadOnly(thread: TailcodexThread, onComplete: (() -> Unit)? = null) {
+    fun openReadOnly(
+        thread: TailcodexThread,
+        onComplete: ((Result<Unit>) -> Unit)? = null,
+        reportFailure: Boolean = true,
+    ) {
         repository.readThread(thread.id) { result ->
             result.onSuccess { snapshot ->
                 val lease = leaseManager.fromRead(snapshot.thread.status, hostIdentity())
                 turn = snapshot.turn
                 update(ThreadState.ReadOnly(snapshot, lease))
-                onComplete?.invoke()
-            }.onFailure(::fail)
+                onComplete?.invoke(Result.success(Unit))
+            }.onFailure {
+                if (reportFailure) fail(it)
+                onComplete?.invoke(Result.failure(it))
+            }
         }
     }
 
@@ -81,9 +88,11 @@ class ThreadSession(
         }
     }
 
-    fun startThread(cwd: String) {
+    fun startThread(cwd: String, onComplete: ((Result<Unit>) -> Unit)? = null) {
         if (!connectionReady()) {
-            fail(IllegalStateException("Connection is not ready"))
+            val error = IllegalStateException("Connection is not ready")
+            fail(error)
+            onComplete?.invoke(Result.failure(error))
             return
         }
         repository.startThread(cwd) { result ->
@@ -91,7 +100,11 @@ class ThreadSession(
                 leaseManager.claimLocal(connectionGeneration(), hostIdentity())
                 turn = snapshot.turn
                 update(ThreadState.Active(snapshot, ThreadLease.LOCAL_PHONE))
-            }.onFailure(::fail)
+                onComplete?.invoke(Result.success(Unit))
+            }.onFailure {
+                fail(it)
+                onComplete?.invoke(Result.failure(it))
+            }
         }
     }
 

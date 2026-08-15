@@ -4,6 +4,9 @@ plugins {
     id("app.cash.paparazzi")
 }
 
+val hostControlEnabled = providers.gradleProperty("tailcodex.hostControlEnabled")
+    .orElse("true")
+
 android {
     namespace = "com.woodward.tailcodex"
     compileSdk = 37
@@ -12,8 +15,9 @@ android {
         applicationId = "com.woodward.tailcodex"
         minSdk = 26
         targetSdk = 36
-        versionCode = 4
-        versionName = "0.2.0"
+        versionCode = 5
+        versionName = "0.3.1"
+        buildConfigField("boolean", "HOST_CONTROL_ENABLED", hostControlEnabled.get())
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

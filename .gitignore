@@ -13,3 +13,4 @@ captures/
 *.apk
 *.aab
 app-server-token
+/host-agent/tailcodex-host-agent

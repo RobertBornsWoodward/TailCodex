@@ -1,0 +1,27 @@
+[Unit]
+Description=TailCodex Host Agent control plane
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=-%h/.config/tailcodex-host-agent/environment
+ExecStart=%h/.local/bin/tailcodex-host-agent serve --listen 127.0.0.1:4510
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=15
+UMask=0077
+
+# The agent is intentionally unprivileged and may write only its private state.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.config/tailcodex-host-agent
+ProtectControlGroups=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=default.target

@@ -1,5 +1,45 @@
 # Host setup
 
+TailCodex has two independent host endpoints:
+
+```text
+Android -- HTTPS/Tailnet --> Tailscale Serve :8444 --> 127.0.0.1:4510 Host Agent
+        \-- WSS/Tailnet ---> Tailscale Serve :8443 --> 127.0.0.1:4500 Codex app-server
+```
+
+The Host Agent controls service lifecycle and later workstation capabilities. The Codex
+app-server continues to carry thread and turn data. They use different device credentials,
+protocols and lifecycle.
+
+## Host Agent
+
+Go 1.26 or newer is required to build the Host Agent. Install it without changing Tailscale:
+
+```bash
+./host/install-host-agent.sh
+```
+
+After reviewing the second Serve route, configure it explicitly:
+
+```bash
+./host/install-host-agent.sh --configure-serve
+tailcodex-host-agent pair
+```
+
+If `tailscale serve` reports that its configuration is restricted to root/operator, keep the
+installer unprivileged and run only the scoped route command interactively on the host:
+
+```bash
+sudo tailscale serve --bg --https=8444 --yes http://127.0.0.1:4510
+```
+
+TailCodex does not store the sudo password and does not configure passwordless sudo.
+
+The Host Agent binds only to `127.0.0.1:4510`. Pairing codes expire, are one-use and can be
+revoked per device. See [Host Agent protocol v1](host-agent-protocol.md).
+
+## Codex app-server
+
 TailCodex uses a local Codex app-server and places it behind Tailscale Serve:
 
 ```text
@@ -13,7 +53,7 @@ Android -- WSS/Tailnet --> Tailscale Serve :8443
 This keeps the unauthenticated HTTP listener on loopback, adds Tailnet TLS, and
 still requires an independent high-entropy app-server capability token.
 
-## Install
+### Install
 
 Review the scripts, then run:
 
@@ -54,11 +94,13 @@ chmod 600 ~/.config/tailcodex/environment
 Do not add an API key to that file. The service uses the existing Codex login
 stored on the host.
 
-## Verify
+### Verify
 
 ```bash
 systemctl --user status tailcodex-app-server.service
+systemctl --user status tailcodex-host-agent.service
 curl http://127.0.0.1:4500/readyz
+curl http://127.0.0.1:4510/v1/hello
 tailscale serve status
 ```
 
@@ -83,6 +125,7 @@ thread on desktop after a mobile turn completes.
 
 ```bash
 ./host/uninstall-user-service.sh
+./host/uninstall-host-agent.sh
 ```
 
 The removal script deliberately retains the token and does not reset unrelated
